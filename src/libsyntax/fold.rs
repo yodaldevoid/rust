@@ -245,6 +245,10 @@ pub trait Folder : Sized {
         noop_fold_generic_params(params, self)
     }
 
+    fn fold_const_param(&mut self, cp: ConstParam) -> ConstParam {
+        noop_fold_const_param(cp, self)
+    }
+
     fn fold_tt(&mut self, tt: TokenTree) -> TokenTree {
         noop_fold_tt(tt, self)
     }
@@ -686,6 +690,7 @@ pub fn noop_fold_generic_param<T: Folder>(param: GenericParam, fld: &mut T) -> G
     match param {
         GenericParam::Lifetime(l) => GenericParam::Lifetime(fld.fold_lifetime_def(l)),
         GenericParam::Type(t) => GenericParam::Type(fld.fold_ty_param(t)),
+        GenericParam::Const(c) => GenericParam::Const(fld.fold_const_param(c)),
     }
 }
 
@@ -694,6 +699,22 @@ pub fn noop_fold_generic_params<T: Folder>(
     fld: &mut T
 ) -> Vec<GenericParam> {
     params.move_map(|p| fld.fold_generic_param(p))
+}
+
+pub fn noop_fold_const_param<T: Folder>(cp: ConstParam, fld: &mut T) -> ConstParam {
+    let ConstParam { attrs, id, ident, ty, span } = cp;
+    let attrs: Vec<_> = attrs.into();
+
+    ConstParam {
+        attrs: attrs.into_iter()
+            .flat_map(|x| fld.fold_attribute(x).into_iter())
+            .collect::<Vec<_>>()
+            .into(),
+        id: fld.new_id(id),
+        ident: fld.fold_ident(ident),
+        ty: fld.fold_ty(ty),
+        span: fld.new_span(span),
+    }
 }
 
 pub fn noop_fold_lifetime<T: Folder>(l: Lifetime, fld: &mut T) -> Lifetime {
