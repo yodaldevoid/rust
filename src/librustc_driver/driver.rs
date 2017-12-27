@@ -38,7 +38,7 @@ use rustc_privacy;
 use rustc_plugin::registry::Registry;
 use rustc_plugin as plugin;
 use rustc_passes::{self, ast_validation, loops, consts, static_recursion, hir_stats};
-use rustc_const_eval::{self, check_match};
+use rustc_mir::const_eval::check_match;
 use super::Compilation;
 use ::DefaultTransCrate;
 
@@ -938,7 +938,6 @@ pub fn default_provide(providers: &mut ty::maps::Providers) {
     ty::provide(providers);
     traits::provide(providers);
     reachable::provide(providers);
-    rustc_const_eval::provide(providers);
     rustc_passes::provide(providers);
     middle::region::provide(providers);
     cstore::provide(providers);
