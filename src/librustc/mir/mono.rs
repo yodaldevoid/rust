@@ -25,9 +25,9 @@ pub enum MonoItem<'tcx> {
     GlobalAsm(NodeId),
 }
 
-impl<'tcx> HashStable<StableHashingContext<'tcx>> for MonoItem<'tcx> {
+impl<'a, 'tcx> HashStable<StableHashingContext<'a, 'tcx>> for MonoItem<'tcx> {
     fn hash_stable<W: StableHasherResult>(&self,
-                                           hcx: &mut StableHashingContext<'tcx>,
+                                           hcx: &mut StableHashingContext<'a, 'tcx>,
                                            hasher: &mut StableHasher<W>) {
         ::std::mem::discriminant(self).hash_stable(hcx, hasher);
 
@@ -133,9 +133,9 @@ impl<'tcx> CodegenUnit<'tcx> {
     }
 }
 
-impl<'tcx> HashStable<StableHashingContext<'tcx>> for CodegenUnit<'tcx> {
+impl<'a, 'tcx> HashStable<StableHashingContext<'a, 'tcx>> for CodegenUnit<'tcx> {
     fn hash_stable<W: StableHasherResult>(&self,
-                                           hcx: &mut StableHashingContext<'tcx>,
+                                           hcx: &mut StableHashingContext<'a, 'tcx>,
                                            hasher: &mut StableHasher<W>) {
         let CodegenUnit {
             ref items,
