@@ -133,7 +133,7 @@ impl<'a, 'tcx, 'v> ItemLikeVisitor<'v> for ConstraintContext<'a, 'tcx> {
 }
 
 impl<'a, 'tcx> StableHashingContextProvider for ConstraintContext<'a, 'tcx> {
-    type ContextType = StableHashingContext<'a, 'tcx>;
+    type ContextType = StableHashingContext<'a>;
 
     fn create_stable_hashing_context(&self) -> Self::ContextType {
          self.terms_cx.tcx.create_stable_hashing_context()
