@@ -14,12 +14,11 @@ use hir::def_id::DefId;
 use ty::{self, TyCtxt, layout};
 use ty::subst::Substs;
 use rustc_const_math::*;
+use mir::interpret::{Value, PrimVal};
+use errors::DiagnosticBuilder;
 
 use graphviz::IntoCow;
-use errors::DiagnosticBuilder;
-use serialize::{self, Encodable, Encoder, Decodable, Decoder};
-use syntax::symbol::InternedString;
-use syntax::ast;
+use serialize;
 use syntax_pos::Span;
 
 use std::borrow::Cow;
@@ -28,16 +27,8 @@ pub type EvalResult<'tcx> = Result<&'tcx ty::Const<'tcx>, ConstEvalErr<'tcx>>;
 
 #[derive(Copy, Clone, Debug, Hash, RustcEncodable, RustcDecodable, Eq, PartialEq)]
 pub enum ConstVal<'tcx> {
-    Integral(ConstInt),
-    Float(ConstFloat),
-    Str(InternedString),
-    ByteStr(ByteArray<'tcx>),
-    Bool(bool),
-    Char(char),
-    Variant(DefId),
-    Function(DefId, &'tcx Substs<'tcx>),
-    Aggregate(ConstAggregate<'tcx>),
     Unevaluated(DefId, &'tcx Substs<'tcx>),
+    Value(Value),
 }
 
 #[derive(Copy, Clone, Debug, Hash, RustcEncodable, Eq, PartialEq)]
@@ -47,33 +38,34 @@ pub struct ByteArray<'tcx> {
 
 impl<'tcx> serialize::UseSpecializedDecodable for ByteArray<'tcx> {}
 
-#[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
-pub enum ConstAggregate<'tcx> {
-    Struct(&'tcx [(ast::Name, &'tcx ty::Const<'tcx>)]),
-    Tuple(&'tcx [&'tcx ty::Const<'tcx>]),
-    Array(&'tcx [&'tcx ty::Const<'tcx>]),
-    Repeat(&'tcx ty::Const<'tcx>, u64),
-}
-
-impl<'tcx> Encodable for ConstAggregate<'tcx> {
-    fn encode<S: Encoder>(&self, _: &mut S) -> Result<(), S::Error> {
-        bug!("should never encode ConstAggregate::{:?}", self)
-    }
-}
-
-impl<'tcx> Decodable for ConstAggregate<'tcx> {
-    fn decode<D: Decoder>(_: &mut D) -> Result<Self, D::Error> {
-        bug!("should never decode ConstAggregate")
-    }
-}
-
 impl<'tcx> ConstVal<'tcx> {
-    pub fn to_const_int(&self) -> Option<ConstInt> {
+    pub fn to_u128(&self) -> Option<u128> {
         match *self {
-            ConstVal::Integral(i) => Some(i),
-            ConstVal::Bool(b) => Some(ConstInt::U8(b as u8)),
-            ConstVal::Char(ch) => Some(ConstInt::U32(ch as u32)),
-            _ => None
+            ConstVal::Value(Value::ByVal(PrimVal::Bytes(b))) => {
+                Some(b)
+            },
+            _ => None,
+        }
+    }
+    pub fn unwrap_u64(&self) -> u64 {
+        match self.to_u128() {
+            Some(val) => {
+                assert_eq!(val as u64 as u128, val);
+                val as u64
+            },
+            None => bug!("expected constant u64, got {:#?}", self),
+        }
+    }
+    pub fn unwrap_usize<'a, 'gcx>(&self, tcx: TyCtxt<'a, 'gcx, 'tcx>) -> ConstUsize {
+        match *self {
+            ConstVal::Value(Value::ByVal(PrimVal::Bytes(b))) => {
+                assert_eq!(b as u64 as u128, b);
+                match ConstUsize::new(b as u64, tcx.sess.target.usize_ty) {
+                    Ok(val) => val,
+                    Err(e) => bug!("{:#?} is not a usize {:?}", self, e),
+                }
+            },
+            _ => bug!("expected constant u64, got {:#?}", self),
         }
     }
 }
@@ -108,6 +100,13 @@ pub enum ErrKind<'tcx> {
 
     TypeckError,
     CheckMatchError,
+    Miri(::mir::interpret::EvalError<'tcx>),
+}
+
+impl<'tcx> From<::mir::interpret::EvalError<'tcx>> for ErrKind<'tcx> {
+    fn from(err: ::mir::interpret::EvalError<'tcx>) -> ErrKind<'tcx> {
+        ErrKind::Miri(err)
+    }
 }
 
 impl<'tcx> From<ConstMathErr> for ErrKind<'tcx> {
@@ -170,6 +169,8 @@ impl<'a, 'gcx, 'tcx> ConstEvalErr<'tcx> {
 
             TypeckError => simple!("type-checking failed"),
             CheckMatchError => simple!("match-checking failed"),
+            // FIXME: report a full backtrace
+            Miri(ref err) => simple!("miri failed: {}", err),
         }
     }
 
@@ -186,7 +187,7 @@ impl<'a, 'gcx, 'tcx> ConstEvalErr<'tcx> {
             err = i_err;
         }
 
-        let mut diag = struct_span_err!(tcx.sess, err.span, E0080, "constant evaluation error");
+        let mut diag = struct_error(tcx, err.span, "constant evaluation error");
         err.note(tcx, primary_span, primary_kind, &mut diag);
         diag
     }
@@ -220,4 +221,12 @@ impl<'a, 'gcx, 'tcx> ConstEvalErr<'tcx> {
         }
         self.struct_error(tcx, primary_span, primary_kind).emit();
     }
+}
+
+pub fn struct_error<'a, 'gcx, 'tcx>(
+    tcx: TyCtxt<'a, 'gcx, 'tcx>,
+    span: Span,
+    msg: &str,
+) -> DiagnosticBuilder<'gcx> {
+    struct_span_err!(tcx.sess, span, E0080, "{}", msg)
 }

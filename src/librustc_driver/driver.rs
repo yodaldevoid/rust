@@ -38,7 +38,7 @@ use rustc_privacy;
 use rustc_plugin::registry::Registry;
 use rustc_plugin as plugin;
 use rustc_passes::{self, ast_validation, loops, consts, static_recursion, hir_stats};
-use rustc_const_eval::{self, check_match};
+use rustc_mir::const_eval::check_match;
 use super::Compilation;
 use ::DefaultTransCrate;
 
@@ -938,7 +938,6 @@ pub fn default_provide(providers: &mut ty::maps::Providers) {
     ty::provide(providers);
     traits::provide(providers);
     reachable::provide(providers);
-    rustc_const_eval::provide(providers);
     rustc_passes::provide(providers);
     middle::region::provide(providers);
     cstore::provide(providers);
@@ -1092,6 +1091,13 @@ pub fn phase_3_run_analysis_passes<'tcx, F, R>(control: &CompileController,
         time(time_passes, "unused lib feature checking", || {
             stability::check_unused_or_stable_features(tcx)
         });
+
+
+        time(time_passes,
+             "MIR linting",
+             || for def_id in tcx.body_owners() {
+                 mir::const_eval::check::check(tcx, def_id)
+             });
 
         time(time_passes, "lint checking", || lint::check_crate(tcx));
 

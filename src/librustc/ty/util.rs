@@ -23,6 +23,7 @@ use ty::subst::{Subst, Kind};
 use ty::TypeVariants::*;
 use util::common::ErrorReported;
 use middle::lang_items;
+use mir::interpret::{Value, PrimVal};
 
 use rustc_const_math::{ConstInt, ConstIsize, ConstUsize};
 use rustc_data_structures::stable_hasher::{StableHasher, StableHasherResult,
@@ -682,22 +683,32 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         }
     }
 
-    /// Check if the node pointed to by def_id is a mutable static item
-    pub fn is_static_mut(&self, def_id: DefId) -> bool {
+    /// Return whether the node pointed to by def_id is a static item, and its mutability
+    pub fn is_static(&self, def_id: DefId) -> Option<hir::Mutability> {
         if let Some(node) = self.hir.get_if_local(def_id) {
             match node {
                 Node::NodeItem(&hir::Item {
-                    node: hir::ItemStatic(_, hir::MutMutable, _), ..
-                }) => true,
+                    node: hir::ItemStatic(_, mutbl, _), ..
+                }) => Some(mutbl),
                 Node::NodeForeignItem(&hir::ForeignItem {
-                    node: hir::ForeignItemStatic(_, mutbl), ..
-                }) => mutbl,
-                _ => false
+                    node: hir::ForeignItemStatic(_, is_mutbl), ..
+                }) =>
+                    Some(if is_mutbl {
+                        hir::Mutability::MutMutable
+                    } else {
+                        hir::Mutability::MutImmutable
+                    }),
+                _ => None
             }
         } else {
             match self.describe_def(def_id) {
-                Some(Def::Static(_, mutbl)) => mutbl,
-                _ => false
+                Some(Def::Static(_, is_mutbl)) =>
+                    Some(if is_mutbl {
+                        hir::Mutability::MutMutable
+                    } else {
+                        hir::Mutability::MutImmutable
+                    }),
+                _ => None
             }
         }
     }
@@ -756,7 +767,7 @@ impl<'a, 'gcx, 'tcx, W> TypeVisitor<'tcx> for TypeIdHasher<'a, 'gcx, 'tcx, W>
             TyArray(_, n) => {
                 self.hash_discriminant_u8(&n.val);
                 match n.val {
-                    ConstVal::Integral(x) => self.hash(x.to_u64().unwrap()),
+                    ConstVal::Value(Value::ByVal(PrimVal::Bytes(b))) => self.hash(b),
                     ConstVal::Unevaluated(def_id, _) => self.def_id(def_id),
                     _ => bug!("arrays should not have {:?} as length", n)
                 }

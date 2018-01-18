@@ -1,4 +1,4 @@
-// Copyright 2015 The Rust Project Developers. See the COPYRIGHT
+// Copyright 2018 The Rust Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution and at
 // http://rust-lang.org/COPYRIGHT.
 //
@@ -8,9 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-const ARR: [usize; 1] = [2];
-const ARR2: [i32; ARR[0]] = [5, 6]; //~ ERROR E0080
-                                    //~| unstable
+//https://github.com/rust-lang/rust/issues/31364
 
-fn main() {
-}
+#![feature(const_fn)]
+const fn a() -> usize { b() }
+const fn b() -> usize { a() }
+const ARR: [i32; a()] = [5; 6]; //~ ERROR constant evaluation error
+
+fn main(){}

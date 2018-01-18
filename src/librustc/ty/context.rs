@@ -30,7 +30,8 @@ use middle::cstore::EncodedMetadata;
 use middle::lang_items;
 use middle::resolve_lifetime::{self, ObjectLifetimeDefault};
 use middle::stability;
-use mir::{Mir, interpret};
+use mir::{self, Mir, interpret};
+use mir::interpret::{Value, PrimVal};
 use ty::subst::{Kind, Substs};
 use ty::ReprOptions;
 use ty::Instance;
@@ -53,7 +54,7 @@ use rustc_data_structures::stable_hasher::{HashStable, hash_stable_hashmap,
                                            StableHasher, StableHasherResult,
                                            StableVec};
 use arena::{TypedArena, DroplessArena};
-use rustc_const_math::{ConstInt, ConstUsize};
+use rustc_const_math::ConstUsize;
 use rustc_data_structures::indexed_vec::IndexVec;
 use std::any::Any;
 use std::borrow::Borrow;
@@ -674,9 +675,9 @@ impl<'tcx> TypeckTables<'tcx> {
     }
 }
 
-impl<'gcx> HashStable<StableHashingContext<'gcx>> for TypeckTables<'gcx> {
+impl<'a, 'gcx> HashStable<StableHashingContext<'a>> for TypeckTables<'gcx> {
     fn hash_stable<W: StableHasherResult>(&self,
-                                          hcx: &mut StableHashingContext<'gcx>,
+                                          hcx: &mut StableHashingContext<'a>,
                                           hasher: &mut StableHasher<W>) {
         let ty::TypeckTables {
             local_id_root,
@@ -904,12 +905,18 @@ pub struct InterpretInterner<'tcx> {
     /// Allows obtaining const allocs via a unique identifier
     alloc_by_id: FxHashMap<interpret::AllocId, &'tcx interpret::Allocation>,
 
+    /// Reverse map of `alloc_cache`
+    global_cache: FxHashMap<interpret::AllocId, DefId>,
+
     /// The AllocId to assign to the next new regular allocation.
     /// Always incremented, never gets smaller.
     next_id: interpret::AllocId,
 
-    /// Allows checking whether a constant already has an allocation
-    alloc_cache: FxHashMap<interpret::GlobalId<'tcx>, interpret::AllocId>,
+    /// Allows checking whether a static already has an allocation
+    ///
+    /// This is only important for detecting statics referring to themselves
+    // FIXME(oli-obk) move it to the EvalContext?
+    alloc_cache: FxHashMap<DefId, interpret::AllocId>,
 
     /// A cache for basic byte allocations keyed by their contents. This is used to deduplicate
     /// allocations for string and bytestring literals.
@@ -944,19 +951,27 @@ impl<'tcx> InterpretInterner<'tcx> {
 
     pub fn get_cached(
         &self,
-        global_id: interpret::GlobalId<'tcx>,
+        static_id: DefId,
     ) -> Option<interpret::AllocId> {
-        self.alloc_cache.get(&global_id).cloned()
+        self.alloc_cache.get(&static_id).cloned()
     }
 
     pub fn cache(
         &mut self,
-        global_id: interpret::GlobalId<'tcx>,
-        ptr: interpret::AllocId,
+        static_id: DefId,
+        alloc_id: interpret::AllocId,
     ) {
-        if let Some(old) = self.alloc_cache.insert(global_id, ptr) {
-            bug!("tried to cache {:?}, but was already existing as {:#?}", global_id, old);
+        self.global_cache.insert(alloc_id, static_id);
+        if let Some(old) = self.alloc_cache.insert(static_id, alloc_id) {
+            bug!("tried to cache {:?}, but was already existing as {:#?}", static_id, old);
         }
+    }
+
+    pub fn get_corresponding_static_def_id(
+        &self,
+        ptr: interpret::AllocId,
+    ) -> Option<DefId> {
+        self.global_cache.get(&ptr).cloned()
     }
 
     pub fn intern_at_reserved(
@@ -1247,6 +1262,36 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         self.get_lang_items(LOCAL_CRATE)
     }
 
+    pub fn is_binop_lang_item(&self, def_id: DefId) -> Option<(mir::BinOp, bool)> {
+        let items = self.lang_items();
+        let def_id = Some(def_id);
+        if items.i128_add_fn() == def_id { Some((mir::BinOp::Add, false)) }
+        else if items.u128_add_fn() == def_id { Some((mir::BinOp::Add, false)) }
+        else if items.i128_sub_fn() == def_id { Some((mir::BinOp::Sub, false)) }
+        else if items.u128_sub_fn() == def_id { Some((mir::BinOp::Sub, false)) }
+        else if items.i128_mul_fn() == def_id { Some((mir::BinOp::Mul, false)) }
+        else if items.u128_mul_fn() == def_id { Some((mir::BinOp::Mul, false)) }
+        else if items.i128_div_fn() == def_id { Some((mir::BinOp::Div, false)) }
+        else if items.u128_div_fn() == def_id { Some((mir::BinOp::Div, false)) }
+        else if items.i128_rem_fn() == def_id { Some((mir::BinOp::Rem, false)) }
+        else if items.u128_rem_fn() == def_id { Some((mir::BinOp::Rem, false)) }
+        else if items.i128_shl_fn() == def_id { Some((mir::BinOp::Shl, false)) }
+        else if items.u128_shl_fn() == def_id { Some((mir::BinOp::Shl, false)) }
+        else if items.i128_shr_fn() == def_id { Some((mir::BinOp::Shr, false)) }
+        else if items.u128_shr_fn() == def_id { Some((mir::BinOp::Shr, false)) }
+        else if items.i128_addo_fn() == def_id { Some((mir::BinOp::Add, true)) }
+        else if items.u128_addo_fn() == def_id { Some((mir::BinOp::Add, true)) }
+        else if items.i128_subo_fn() == def_id { Some((mir::BinOp::Sub, true)) }
+        else if items.u128_subo_fn() == def_id { Some((mir::BinOp::Sub, true)) }
+        else if items.i128_mulo_fn() == def_id { Some((mir::BinOp::Mul, true)) }
+        else if items.u128_mulo_fn() == def_id { Some((mir::BinOp::Mul, true)) }
+        else if items.i128_shlo_fn() == def_id { Some((mir::BinOp::Shl, true)) }
+        else if items.u128_shlo_fn() == def_id { Some((mir::BinOp::Shl, true)) }
+        else if items.i128_shro_fn() == def_id { Some((mir::BinOp::Shr, true)) }
+        else if items.u128_shro_fn() == def_id { Some((mir::BinOp::Shr, true)) }
+        else { None }
+    }
+
     pub fn stability(self) -> Rc<stability::Index<'tcx>> {
         self.stability_index(LOCAL_CRATE)
     }
@@ -1316,7 +1361,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         self.cstore.crate_data_as_rc_any(cnum)
     }
 
-    pub fn create_stable_hashing_context(self) -> StableHashingContext<'gcx> {
+    pub fn create_stable_hashing_context(self) -> StableHashingContext<'a> {
         let krate = self.dep_graph.with_ignore(|| self.gcx.hir.krate());
 
         StableHashingContext::new(self.sess,
@@ -1996,7 +2041,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
 
     pub fn mk_array_const_usize(self, ty: Ty<'tcx>, n: ConstUsize) -> Ty<'tcx> {
         self.mk_ty(TyArray(ty, self.mk_const(ty::Const {
-            val: ConstVal::Integral(ConstInt::Usize(n)),
+            val: ConstVal::Value(Value::ByVal(PrimVal::Bytes(n.as_u64().into()))),
             ty: self.types.usize
         })))
     }

@@ -36,6 +36,7 @@ use rustc::ty::{ToPredicate, ReprOptions};
 use rustc::ty::{self, AdtKind, ToPolyTraitRef, Ty, TyCtxt};
 use rustc::ty::maps::Providers;
 use rustc::ty::util::IntTypeExt;
+use rustc::mir::interpret::{GlobalId, Value, PrimVal};
 use util::nodemap::FxHashMap;
 
 use rustc_const_math::ConstInt;
@@ -527,16 +528,32 @@ fn convert_enum_variant_types<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         prev_discr = Some(if let Some(e) = variant.node.disr_expr {
             let expr_did = tcx.hir.local_def_id(e.node_id);
             let substs = Substs::identity_for_item(tcx, expr_did);
-            let result = tcx.at(variant.span).const_eval(param_env.and((expr_did, substs)));
+            let instance = ty::Instance::new(expr_did, substs);
+            let global_id = GlobalId {
+                instance,
+                promoted: None
+            };
+            let result = tcx.at(variant.span).const_eval(param_env.and(global_id));
 
             // enum variant evaluation happens before the global constant check
             // so we need to report the real error
             if let Err(ref err) = result {
                 err.report(tcx, variant.span, "enum discriminant");
-            }
+}
 
             match result {
-                Ok(&ty::Const { val: ConstVal::Integral(x), .. }) => Some(x),
+                Ok(&ty::Const {
+                    val: ConstVal::Value(Value::ByVal(PrimVal::Bytes(b))),
+                    ..
+                }) => {
+                    use syntax::attr::IntType;
+                    Some(match repr_type {
+                        IntType::SignedInt(int_type) => ConstInt::new_signed(
+                            b as i128, int_type, tcx.sess.target.isize_ty).unwrap(),
+                        IntType::UnsignedInt(uint_type) => ConstInt::new_unsigned(
+                            b, uint_type, tcx.sess.target.usize_ty).unwrap(),
+                    })
+                }
                 _ => None
             }
         } else if let Some(discr) = repr_type.disr_incr(tcx, prev_discr) {

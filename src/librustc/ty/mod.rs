@@ -26,6 +26,7 @@ use middle::lang_items::{FnTraitLangItem, FnMutTraitLangItem, FnOnceTraitLangIte
 use middle::privacy::AccessLevels;
 use middle::resolve_lifetime::ObjectLifetimeDefault;
 use mir::Mir;
+use mir::interpret::{GlobalId, Value, PrimVal};
 use mir::GeneratorLayout;
 use session::CrateDisambiguator;
 use traits;
@@ -79,7 +80,7 @@ pub use self::binding::BindingMode;
 pub use self::binding::BindingMode::*;
 
 pub use self::context::{TyCtxt, GlobalArenas, AllArenas, tls, keep_local};
-pub use self::context::{Lift, TypeckTables};
+pub use self::context::{Lift, TypeckTables, InterpretInterner};
 
 pub use self::instance::{Instance, InstanceDef};
 
@@ -528,9 +529,9 @@ impl<'tcx> TyS<'tcx> {
     }
 }
 
-impl<'gcx> HashStable<StableHashingContext<'gcx>> for ty::TyS<'gcx> {
+impl<'a, 'gcx> HashStable<StableHashingContext<'a>> for ty::TyS<'gcx> {
     fn hash_stable<W: StableHasherResult>(&self,
-                                          hcx: &mut StableHashingContext<'gcx>,
+                                          hcx: &mut StableHashingContext<'a>,
                                           hasher: &mut StableHasher<W>) {
         let ty::TyS {
             ref sty,
@@ -1367,11 +1368,11 @@ impl<'tcx, T> ParamEnvAnd<'tcx, T> {
     }
 }
 
-impl<'gcx, T> HashStable<StableHashingContext<'gcx>> for ParamEnvAnd<'gcx, T>
-    where T: HashStable<StableHashingContext<'gcx>>
+impl<'a, 'gcx, T> HashStable<StableHashingContext<'a>> for ParamEnvAnd<'gcx, T>
+    where T: HashStable<StableHashingContext<'a>>
 {
     fn hash_stable<W: StableHasherResult>(&self,
-                                          hcx: &mut StableHashingContext<'gcx>,
+                                          hcx: &mut StableHashingContext<'a>,
                                           hasher: &mut StableHasher<W>) {
         let ParamEnvAnd {
             ref param_env,
@@ -1472,9 +1473,9 @@ impl<'tcx> serialize::UseSpecializedEncodable for &'tcx AdtDef {
 impl<'tcx> serialize::UseSpecializedDecodable for &'tcx AdtDef {}
 
 
-impl<'gcx> HashStable<StableHashingContext<'gcx>> for AdtDef {
+impl<'a> HashStable<StableHashingContext<'a>> for AdtDef {
     fn hash_stable<W: StableHasherResult>(&self,
-                                          hcx: &mut StableHashingContext<'gcx>,
+                                          hcx: &mut StableHashingContext<'a>,
                                           hasher: &mut StableHasher<W>) {
         let ty::AdtDef {
             did,
@@ -1743,15 +1744,30 @@ impl<'a, 'gcx, 'tcx> AdtDef {
             let mut discr = prev_discr.map_or(initial, |d| d.wrap_incr());
             if let VariantDiscr::Explicit(expr_did) = v.discr {
                 let substs = Substs::identity_for_item(tcx.global_tcx(), expr_did);
-                match tcx.const_eval(param_env.and((expr_did, substs))) {
-                    Ok(&ty::Const { val: ConstVal::Integral(v), .. }) => {
-                        discr = v;
+                let instance = ty::Instance::new(expr_did, substs);
+                let cid = GlobalId {
+                    instance,
+                    promoted: None
+                };
+                match tcx.const_eval(param_env.and(cid)) {
+                    Ok(&ty::Const {
+                        val: ConstVal::Value(Value::ByVal(PrimVal::Bytes(b))),
+                        ..
+                    }) => {
+                        trace!("discriminants: {} ({:?})", b, repr_type);
+                        use syntax::attr::IntType;
+                        discr = match repr_type {
+                            IntType::SignedInt(int_type) => ConstInt::new_signed(
+                                b as i128, int_type, tcx.sess.target.isize_ty).unwrap(),
+                            IntType::UnsignedInt(uint_type) => ConstInt::new_unsigned(
+                                b, uint_type, tcx.sess.target.usize_ty).unwrap(),
+                        };
                     }
-                    err => {
+                    _ => {
                         if !expr_did.is_local() {
                             span_bug!(tcx.def_span(expr_did),
                                 "variant discriminant evaluation succeeded \
-                                 in its crate but failed locally: {:?}", err);
+                                 in its crate but failed locally");
                         }
                     }
                 }
@@ -1783,16 +1799,31 @@ impl<'a, 'gcx, 'tcx> AdtDef {
                 }
                 ty::VariantDiscr::Explicit(expr_did) => {
                     let substs = Substs::identity_for_item(tcx.global_tcx(), expr_did);
-                    match tcx.const_eval(param_env.and((expr_did, substs))) {
-                        Ok(&ty::Const { val: ConstVal::Integral(v), .. }) => {
-                            explicit_value = v;
+                    let instance = ty::Instance::new(expr_did, substs);
+                    let cid = GlobalId {
+                        instance,
+                        promoted: None
+                    };
+                    match tcx.const_eval(param_env.and(cid)) {
+                        Ok(&ty::Const {
+                            val: ConstVal::Value(Value::ByVal(PrimVal::Bytes(b))),
+                            ..
+                        }) => {
+                            trace!("discriminants: {} ({:?})", b, repr_type);
+                            use syntax::attr::IntType;
+                            explicit_value = match repr_type {
+                                IntType::SignedInt(int_type) => ConstInt::new_signed(
+                                    b as i128, int_type, tcx.sess.target.isize_ty).unwrap(),
+                                IntType::UnsignedInt(uint_type) => ConstInt::new_unsigned(
+                                    b, uint_type, tcx.sess.target.usize_ty).unwrap(),
+                            };
                             break;
                         }
-                        err => {
+                        _ => {
                             if !expr_did.is_local() {
                                 span_bug!(tcx.def_span(expr_did),
                                     "variant discriminant evaluation succeeded \
-                                     in its crate but failed locally: {:?}", err);
+                                     in its crate but failed locally");
                             }
                             if explicit_index == 0 {
                                 break;

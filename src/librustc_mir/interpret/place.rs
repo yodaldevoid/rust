@@ -1,11 +1,13 @@
 use rustc::mir;
 use rustc::ty::{self, Ty};
 use rustc::ty::layout::{self, Align, LayoutOf, TyLayout};
+use rustc::traits;
 use rustc_data_structures::indexed_vec::Idx;
 
 use rustc::mir::interpret::{GlobalId, Value, PrimVal, EvalResult, Pointer, MemoryPointer};
 use super::{EvalContext, Machine, ValTy};
 use interpret::memory::HasMemory;
+use rustc::middle::const_val::ErrKind;
 
 #[derive(Copy, Clone, Debug)]
 pub enum Place {
@@ -71,7 +73,7 @@ impl<'tcx> Place {
 
     pub(super) fn elem_ty_and_len(self, ty: Ty<'tcx>) -> (Ty<'tcx>, u64) {
         match ty.sty {
-            ty::TyArray(elem, n) => (elem, n.val.to_const_int().unwrap().to_u64().unwrap() as u64),
+            ty::TyArray(elem, n) => (elem, n.val.unwrap_u64() as u64),
 
             ty::TySlice(elem) => {
                 match self {
@@ -90,7 +92,7 @@ impl<'tcx> Place {
     }
 }
 
-impl<'a, 'tcx, M: Machine<'tcx>> EvalContext<'a, 'tcx, M> {
+impl<'a, 'mir, 'tcx, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> {
     /// Reads a value from the place without going through the intermediate step of obtaining
     /// a `miri::Place`
     pub fn try_read_place(
@@ -106,12 +108,39 @@ impl<'a, 'tcx, M: Machine<'tcx>> EvalContext<'a, 'tcx, M> {
             // Directly reading a static will always succeed
             Static(ref static_) => {
                 let instance = ty::Instance::mono(self.tcx, static_.def_id);
-                Ok(Some(self.read_global_as_value(GlobalId {
+                self.read_global_as_value(GlobalId {
                     instance,
                     promoted: None,
-                }, self.layout_of(self.place_ty(place))?)))
+                }, self.place_ty(place)).map(Some)
             }
             Projection(ref proj) => self.try_read_place_projection(proj),
+        }
+    }
+
+    pub fn read_field(
+        &self,
+        base: Value,
+        variant: Option<usize>,
+        field: mir::Field,
+        base_ty: Ty<'tcx>,
+    ) -> EvalResult<'tcx, Option<(Value, Ty<'tcx>)>> {
+        let mut base_layout = self.layout_of(base_ty)?;
+        if let Some(variant_index) = variant {
+            base_layout = base_layout.for_variant(self, variant_index);
+        }
+        let field_index = field.index();
+        let field = base_layout.field(self, field_index)?;
+        let offset = base_layout.fields.offset(field_index);
+        match base {
+            // the field covers the entire type
+            Value::ByValPair(..) |
+            Value::ByVal(_) if offset.bytes() == 0 && field.size == base_layout.size => Ok(Some((base, field.ty))),
+            // split fat pointers, 2 element tuples, ...
+            Value::ByValPair(a, b) if base_layout.fields.count() == 2 => {
+                let val = [a, b][field_index];
+                Ok(Some((Value::ByVal(val), field.ty)))
+            },
+            _ => Ok(None),
         }
     }
 
@@ -126,23 +155,7 @@ impl<'a, 'tcx, M: Machine<'tcx>> EvalContext<'a, 'tcx, M> {
         };
         let base_ty = self.place_ty(&proj.base);
         match proj.elem {
-            Field(field, _) => {
-                let base_layout = self.layout_of(base_ty)?;
-                let field_index = field.index();
-                let field = base_layout.field(&self, field_index)?;
-                let offset = base_layout.fields.offset(field_index);
-                match base {
-                    // the field covers the entire type
-                    Value::ByValPair(..) |
-                    Value::ByVal(_) if offset.bytes() == 0 && field.size == base_layout.size => Ok(Some(base)),
-                    // split fat pointers, 2 element tuples, ...
-                    Value::ByValPair(a, b) if base_layout.fields.count() == 2 => {
-                        let val = [a, b][field_index];
-                        Ok(Some(Value::ByVal(val)))
-                    },
-                    _ => Ok(None),
-                }
-            },
+            Field(field, _) => Ok(self.read_field(base, None, field, base_ty)?.map(|(f, _)| f)),
             // The NullablePointer cases should work fine, need to take care for normal enums
             Downcast(..) |
             Subslice { .. } |
@@ -188,17 +201,44 @@ impl<'a, 'tcx, M: Machine<'tcx>> EvalContext<'a, 'tcx, M> {
             },
 
             Static(ref static_) => {
-                let instance = ty::Instance::mono(self.tcx, static_.def_id);
-                let gid = GlobalId {
-                    instance,
-                    promoted: None,
-                };
+                let alloc = self
+                    .tcx
+                    .interpret_interner
+                    .borrow()
+                    .get_cached(static_.def_id);
                 let layout = self.layout_of(self.place_ty(mir_place))?;
-                let alloc = self.tcx.interpret_interner.borrow().get_cached(gid).expect("uncached global");
-                Place::Ptr {
-                    ptr: MemoryPointer::new(alloc, 0).into(),
-                    align: layout.align,
-                    extra: PlaceExtra::None,
+                if let Some(alloc) = alloc {
+                    Place::Ptr {
+                        ptr: MemoryPointer::new(alloc, 0).into(),
+                        align: layout.align,
+                        extra: PlaceExtra::None,
+                    }
+                } else {
+                    let instance = ty::Instance::mono(self.tcx, static_.def_id);
+                    let cid = GlobalId {
+                        instance,
+                        promoted: None
+                    };
+                    let param_env = ty::ParamEnv::empty(traits::Reveal::All);
+                    // ensure the static is computed
+                    if let Err(err) = self.tcx.const_eval(param_env.and(cid)) {
+                        match err.kind {
+                            ErrKind::Miri(miri) => return Err(miri),
+                            ErrKind::TypeckError => return err!(TypeckError),
+                            other => bug!("const eval returned {:?}", other),
+                        }
+                    };
+                    let alloc = self
+                        .tcx
+                        .interpret_interner
+                        .borrow()
+                        .get_cached(static_.def_id)
+                        .expect("uncached static");
+                    Place::Ptr {
+                        ptr: MemoryPointer::new(alloc, 0).into(),
+                        align: layout.align,
+                        extra: PlaceExtra::None,
+                    }
                 }
             }
 
