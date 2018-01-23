@@ -710,6 +710,13 @@ pub struct TypeParameterDef {
 }
 
 #[derive(Copy, Clone, RustcEncodable, RustcDecodable)]
+pub struct ConstParameterDef {
+    pub name: Name,
+    pub def_id: DefId,
+    pub index: u32,
+}
+
+#[derive(Copy, Clone, RustcEncodable, RustcDecodable)]
 pub struct RegionParameterDef {
     pub name: Name,
     pub def_id: DefId,
@@ -757,6 +764,7 @@ pub struct Generics {
     pub parent_types: u32,
     pub regions: Vec<RegionParameterDef>,
     pub types: Vec<TypeParameterDef>,
+    pub consts: Vec<ConstParameterDef>,
 
     /// Reverse map to each `TypeParameterDef`'s `index` field, from
     /// `def_id.index` (`def_id.krate` is the same as the item's).
@@ -772,7 +780,7 @@ impl<'a, 'gcx, 'tcx> Generics {
     }
 
     pub fn own_count(&self) -> usize {
-        self.regions.len() + self.types.len()
+        self.regions.len() + self.types.len() + self.consts.len()
     }
 
     pub fn count(&self) -> usize {
@@ -789,6 +797,25 @@ impl<'a, 'gcx, 'tcx> Generics {
         } else {
             tcx.generics_of(self.parent.expect("parent_count>0 but no parent?"))
                 .region_param(param, tcx)
+        }
+    }
+
+    /// Returns the `ConstParameterDef` associated with this `ParamTy`.
+    pub fn const_param(&'tcx self,
+                       param: &ParamTy,
+                       tcx: TyCtxt<'a, 'gcx, 'tcx>)
+                       -> &ConstParameterDef {
+        if let Some(idx) = param.idx.checked_sub(self.parent_count() as u32) {
+            let const_param_offset = self.regions.len() + self.types.len();
+
+            if let Some(idx) = (idx as usize).checked_sub(const_param_offset) {
+                &self.consts[idx]
+            } else {
+                &self.consts[0]
+            }
+        } else {
+            tcx.generics_of(self.parent.expect("parent_count>0 but no parent?"))
+                .const_param(param, tcx)
         }
     }
 
