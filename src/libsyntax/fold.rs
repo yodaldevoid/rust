@@ -702,7 +702,7 @@ pub fn noop_fold_generic_params<T: Folder>(
 }
 
 pub fn noop_fold_const_param<T: Folder>(cp: ConstParam, fld: &mut T) -> ConstParam {
-    let ConstParam { attrs, id, ident, ty, span } = cp;
+    let ConstParam { attrs, id, ident, ty, default, span } = cp;
     let attrs: Vec<_> = attrs.into();
 
     ConstParam {
@@ -713,6 +713,7 @@ pub fn noop_fold_const_param<T: Folder>(cp: ConstParam, fld: &mut T) -> ConstPar
         id: fld.new_id(id),
         ident: fld.fold_ident(ident),
         ty: fld.fold_ty(ty),
+        default: default.map(|_x| unimplemented!()), // TODO(varkor)
         span: fld.new_span(span),
     }
 }
