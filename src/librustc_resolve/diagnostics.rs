@@ -523,7 +523,7 @@ closures or copying the parameters should still work.
 "##,
 
 E0403: r##"
-Some type parameters have the same name.
+Some type or const parameters have the same name.
 
 Erroneous code example:
 
@@ -1638,6 +1638,17 @@ mod collider {
 fn main() {
     collider::moon::foo(); // ok!
     collider::earth::foo(); // ok!
+}
+```
+"##,
+
+E0671: r##"
+Const parameters cannot depend on type parameters.
+The following is therefore invalid:
+
+```
+fn const_id<T, const N: T>() -> T {
+    N
 }
 ```
 "##,

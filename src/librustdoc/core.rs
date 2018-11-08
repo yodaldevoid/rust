@@ -221,8 +221,16 @@ impl<'a, 'tcx, 'rcx> DocContext<'a, 'tcx, 'rcx> {
                 ty::GenericParamDefKind::Type { .. } => {
                     args.push(hir::GenericArg::Type(self.ty_param_to_ty(param.clone())));
                 }
-                ty::GenericParamDefKind::Const { .. } => {
-                    unimplemented!() // FIXME(const_generics)
+                ty::GenericParamDefKind::Const => {
+                    args.push(hir::GenericArg::Const(hir::ConstArg {
+                        value: hir::AnonConst {
+                            hir_id: hir::DUMMY_HIR_ID,
+                            body: hir::BodyId {
+                                hir_id: hir::DUMMY_HIR_ID,
+                            }
+                        },
+                        span: DUMMY_SP,
+                    }))
                 }
             }
         }

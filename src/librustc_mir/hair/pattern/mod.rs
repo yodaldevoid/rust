@@ -33,6 +33,7 @@ use syntax_pos::Span;
 #[derive(Clone, Debug)]
 pub enum PatternError {
     AssociatedConstInPattern(Span),
+    // FIXME(const_generics): figure out what we should do about const generics in patterns
     StaticInPattern(Span),
     FloatBug,
     NonConstPath(Span),

@@ -17,10 +17,10 @@ use rustc::middle::resolve_lifetime as rl;
 use rustc::middle::lang_items;
 use rustc::middle::stability;
 use rustc::mir::interpret::GlobalId;
-use rustc::hir::{self, GenericArg, HirVec};
+use rustc::hir::{self, HirVec};
 use rustc::hir::def::{self, Def, CtorKind};
 use rustc::hir::def_id::{CrateNum, DefId, CRATE_DEF_INDEX, LOCAL_CRATE};
-use rustc::ty::subst::{InternalSubsts, SubstsRef};
+use rustc::ty::subst::{InternalSubsts, SubstsRef, UnpackedKind};
 use rustc::ty::{self, TyCtxt, Region, RegionVid, Ty, AdtKind};
 use rustc::ty::fold::TypeFolder;
 use rustc::ty::layout::VariantIdx;
@@ -1090,22 +1090,30 @@ impl Clean<GenericBound> for hir::GenericBound {
 
 fn external_generic_args(cx: &DocContext<'_, '_, '_>, trait_did: Option<DefId>, has_self: bool,
                         bindings: Vec<TypeBinding>, substs: SubstsRef<'_>) -> GenericArgs {
-    let lifetimes = substs.regions().filter_map(|v| v.clean(cx)).collect();
-    let types = substs.types().skip(has_self as usize).collect::<Vec<_>>();
+    let mut skip_self = has_self;
+    let mut first_ty_sty = None;
+    let args: Vec<_> = substs.iter().filter_map(|kind| match kind.unpack() {
+        UnpackedKind::Lifetime(lt) => {
+            lt.clean(cx).and_then(|lt| Some(GenericArg::Lifetime(lt)))
+        }
+        UnpackedKind::Type(_) if skip_self => {
+            skip_self = false;
+            None
+        }
+        UnpackedKind::Type(ty) => {
+            first_ty_sty = Some(&ty.sty);
+            Some(GenericArg::Type(ty.clean(cx)))
+        }
+        UnpackedKind::Const(ct) => Some(GenericArg::Const(ct.clean(cx))),
+    }).collect();
 
     match trait_did {
         // Attempt to sugar an external path like Fn<(A, B,), C> to Fn(A, B) -> C
         Some(did) if cx.tcx.lang_items().fn_trait_kind(did).is_some() => {
-            assert_eq!(types.len(), 1);
-            let inputs = match types[0].sty {
-                ty::Tuple(ref tys) => tys.iter().map(|t| t.clean(cx)).collect(),
-                _ => {
-                    return GenericArgs::AngleBracketed {
-                        lifetimes,
-                        types: types.clean(cx),
-                        bindings,
-                    }
-                }
+            assert!(first_ty_sty.is_some());
+            let inputs = match first_ty_sty {
+                Some(ty::Tuple(ref tys)) => tys.iter().map(|t| t.clean(cx)).collect(),
+                _ => return GenericArgs::AngleBracketed { args, bindings },
             };
             let output = None;
             // FIXME(#20299) return type comes from a projection now
@@ -1113,17 +1121,10 @@ fn external_generic_args(cx: &DocContext<'_, '_, '_>, trait_did: Option<DefId>, 
             //     ty::Tuple(ref v) if v.is_empty() => None, // -> ()
             //     _ => Some(types[1].clean(cx))
             // };
-            GenericArgs::Parenthesized {
-                inputs,
-                output,
-            }
+            GenericArgs::Parenthesized { inputs, output }
         },
         _ => {
-            GenericArgs::AngleBracketed {
-                lifetimes,
-                types: types.clean(cx),
-                bindings,
-            }
+            GenericArgs::AngleBracketed { args, bindings }
         }
     }
 }
@@ -1468,7 +1469,7 @@ impl<'tcx> Clean<GenericParamDef> for ty::GenericParamDef {
                 (self.name.to_string(), GenericParamDefKind::Lifetime)
             }
             ty::GenericParamDefKind::Type { has_default, .. } => {
-                cx.renderinfo.borrow_mut().external_typarams
+                cx.renderinfo.borrow_mut().external_param_names
                              .insert(self.def_id, self.name.clean(cx));
                 let default = if has_default {
                     Some(cx.tcx.type_of(self.def_id).clean(cx))
@@ -1483,7 +1484,10 @@ impl<'tcx> Clean<GenericParamDef> for ty::GenericParamDef {
                 })
             }
             ty::GenericParamDefKind::Const { .. } => {
-                unimplemented!() // FIXME(const_generics)
+                (self.name.clean(cx), GenericParamDefKind::Const {
+                    did: self.def_id,
+                    ty: cx.tcx.type_of(self.def_id).clean(cx),
+                })
             }
         };
 
@@ -1684,9 +1688,7 @@ impl<'a, 'tcx> Clean<Generics> for (&'a ty::Generics,
                         .flat_map(|param| match param.kind {
                             ty::GenericParamDefKind::Lifetime => Some(param.clean(cx)),
                             ty::GenericParamDefKind::Type { .. } => None,
-                            ty::GenericParamDefKind::Const { .. } => {
-                                unimplemented!() // FIXME(const_generics)
-                            }
+                            ty::GenericParamDefKind::Const { .. } => Some(param.clean(cx)),
                         }).chain(simplify::ty_params(stripped_typarams).into_iter())
                         .collect(),
             where_predicates: simplify::where_clauses(cx, where_predicates),
@@ -2364,12 +2366,15 @@ impl Type {
         }
     }
 
-    pub fn generics(&self) -> Option<&[Type]> {
+    pub fn generics(&self) -> Option<Vec<Type>> {
         match *self {
             ResolvedPath { ref path, .. } => {
                 path.segments.last().and_then(|seg| {
-                    if let GenericArgs::AngleBracketed { ref types, .. } = seg.args {
-                        Some(&**types)
+                    if let GenericArgs::AngleBracketed { ref args, .. } = seg.args {
+                        Some(args.iter().filter_map(|arg| match arg {
+                            GenericArg::Type(ty) => Some(ty.clone()),
+                            _ => None,
+                        }).collect())
                     } else {
                         None
                     }
@@ -2920,6 +2925,26 @@ impl<'tcx> Clean<Type> for Ty<'tcx> {
     }
 }
 
+// FIXME(const_generics:rustdoc)
+impl<'tcx> Clean<Constant> for ty::LazyConst<'tcx> {
+    fn clean(&self, cx: &DocContext<'_, '_, '_>) -> Constant {
+        if let ty::LazyConst::Evaluated(ct) = self {
+            ct.clean(cx)
+        } else {
+            unimplemented!()
+        }
+    }
+}
+
+impl<'tcx> Clean<Constant> for ty::Const<'tcx> {
+    fn clean(&self, cx: &DocContext<'_, '_, '_>) -> Constant {
+        Constant {
+            type_: self.ty.clean(cx),
+            expr: format!("{:?}", self.val), // FIXME(const_generics:rustdoc)
+        }
+    }
+}
+
 impl Clean<Item> for hir::StructField {
     fn clean(&self, cx: &DocContext<'_, '_, '_>) -> Item {
         let local_did = cx.tcx.hir().local_def_id_from_hir_id(self.hir_id);
@@ -3228,10 +3253,26 @@ impl Clean<Path> for hir::Path {
 }
 
 #[derive(Clone, RustcEncodable, RustcDecodable, PartialEq, Eq, Debug, Hash)]
+pub enum GenericArg {
+    Lifetime(Lifetime),
+    Type(Type),
+    Const(Constant),
+}
+
+impl fmt::Display for GenericArg {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            GenericArg::Lifetime(lt) => lt.fmt(f),
+            GenericArg::Type(ty) => ty.fmt(f),
+            GenericArg::Const(ct) => ct.fmt(f),
+        }
+    }
+}
+
+#[derive(Clone, RustcEncodable, RustcDecodable, PartialEq, Eq, Debug, Hash)]
 pub enum GenericArgs {
     AngleBracketed {
-        lifetimes: Vec<Lifetime>,
-        types: Vec<Type>,
+        args: Vec<GenericArg>,
         bindings: Vec<TypeBinding>,
     },
     Parenthesized {
@@ -3249,27 +3290,19 @@ impl Clean<GenericArgs> for hir::GenericArgs {
                 output: if output != Type::Tuple(Vec::new()) { Some(output) } else { None }
             }
         } else {
-            let (mut lifetimes, mut types) = (vec![], vec![]);
-            let mut elided_lifetimes = true;
-            for arg in &self.args {
-                match arg {
-                    GenericArg::Lifetime(lt) => {
-                        if !lt.is_elided() {
-                            elided_lifetimes = false;
-                        }
-                        lifetimes.push(lt.clean(cx));
-                    }
-                    GenericArg::Type(ty) => {
-                        types.push(ty.clean(cx));
-                    }
-                    GenericArg::Const(..) => {
-                        unimplemented!() // FIXME(const_generics)
-                    }
-                }
-            }
+            let elide_lifetimes = self.args.iter().all(|arg| match arg {
+                hir::GenericArg::Lifetime(lt) => lt.is_elided(),
+                _ => true,
+            });
             GenericArgs::AngleBracketed {
-                lifetimes: if elided_lifetimes { vec![] } else { lifetimes },
-                types,
+                args: self.args.iter().filter_map(|arg| match arg {
+                    hir::GenericArg::Lifetime(lt) if !elide_lifetimes => {
+                        Some(GenericArg::Lifetime(lt.clean(cx)))
+                    }
+                    hir::GenericArg::Lifetime(_) => None,
+                    hir::GenericArg::Type(ty) => Some(GenericArg::Type(ty.clean(cx))),
+                    hir::GenericArg::Const(ct) => Some(GenericArg::Const(ct.clean(cx))),
+                }).collect(),
                 bindings: self.bindings.clean(cx),
             }
         }
@@ -3321,9 +3354,8 @@ fn strip_path(path: &Path) -> Path {
         PathSegment {
             name: s.name.clone(),
             args: GenericArgs::AngleBracketed {
-                lifetimes: Vec::new(),
-                types: Vec::new(),
-                bindings: Vec::new(),
+                args: vec![],
+                bindings: vec![],
             }
         }
     }).collect();
@@ -3474,7 +3506,7 @@ impl Clean<Item> for doctree::Static {
     }
 }
 
-#[derive(Clone, RustcEncodable, RustcDecodable, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash, RustcEncodable, RustcDecodable, Debug)]
 pub struct Constant {
     pub type_: Type,
     pub expr: String,

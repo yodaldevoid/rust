@@ -259,6 +259,12 @@ impl fmt::Display for clean::Lifetime {
     }
 }
 
+impl fmt::Display for clean::Constant {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: {}", self.expr, self.type_)
+    }
+}
+
 impl fmt::Display for clean::PolyTrait {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if !self.generic_params.is_empty() {
@@ -300,32 +306,24 @@ impl fmt::Display for clean::GenericBound {
 impl fmt::Display for clean::GenericArgs {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
-            clean::GenericArgs::AngleBracketed {
-                ref lifetimes, ref types, ref bindings
-            } => {
-                if !lifetimes.is_empty() || !types.is_empty() || !bindings.is_empty() {
+            clean::GenericArgs::AngleBracketed { ref args, ref bindings } => {
+                if !args.is_empty() ||
+                   !bindings.is_empty() {
                     if f.alternate() {
                         f.write_str("<")?;
                     } else {
                         f.write_str("&lt;")?;
                     }
                     let mut comma = false;
-                    for lifetime in lifetimes {
-                        if comma {
-                            f.write_str(", ")?;
-                        }
-                        comma = true;
-                        write!(f, "{}", *lifetime)?;
-                    }
-                    for ty in types {
+                    for arg in args {
                         if comma {
                             f.write_str(", ")?;
                         }
                         comma = true;
                         if f.alternate() {
-                            write!(f, "{:#}", *ty)?;
+                            write!(f, "{:#}", *arg)?;
                         } else {
-                            write!(f, "{}", *ty)?;
+                            write!(f, "{}", *arg)?;
                         }
                     }
                     for binding in bindings {
