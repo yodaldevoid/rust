@@ -850,6 +850,20 @@ impl<'cx, 'gcx, 'tcx> TypeFolder<'gcx, 'tcx> for Resolver<'cx, 'gcx, 'tcx> {
     fn fold_region(&mut self, r: ty::Region<'tcx>) -> ty::Region<'tcx> {
         self.infcx.fully_resolve(&r).unwrap_or(self.tcx.types.re_static)
     }
+
+    // We could use `self.report_error` but it doesn't accept a ty::LazyConst, right now.
+    fn fold_const(&mut self, c: &'tcx ty::LazyConst<'tcx>) -> &'tcx ty::LazyConst<'tcx> {
+        match self.infcx.fully_resolve(&c) {
+            Ok(c) => c,
+            Err(_) => {
+                debug!(
+                    "Resolver::fold_const: input const `{:?}` not fully resolvable",
+                    c
+                );
+                self.tcx().types.ct_err
+            }
+        }
+    }
 }
 
 ///////////////////////////////////////////////////////////////////////////
