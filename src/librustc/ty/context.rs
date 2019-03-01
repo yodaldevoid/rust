@@ -2700,10 +2700,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
 
     #[inline]
     pub fn mk_const_var(self, v: ConstVid<'tcx>, ty: Ty<'tcx>) -> &'tcx LazyConst<'tcx> {
-        self.mk_lazy_const(LazyConst::Evaluated(ty::Const {
-            val: ConstValue::Infer(InferConst::Var(v)),
-            ty,
-        }))
+        self.mk_const_infer(InferConst::Var(v), ty)
     }
 
     #[inline]
@@ -2719,6 +2716,18 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
     #[inline]
     pub fn mk_ty_infer(self, it: InferTy) -> Ty<'tcx> {
         self.mk_ty(Infer(it))
+    }
+
+    #[inline]
+    pub fn mk_const_infer(
+        self,
+        ic: InferConst<'tcx>,
+        ty: Ty<'tcx>,
+    ) -> &'tcx LazyConst<'tcx> {
+        self.mk_lazy_const(LazyConst::Evaluated(ty::Const {
+            val: ConstValue::Infer(ic),
+            ty,
+        }))
     }
 
     #[inline]
