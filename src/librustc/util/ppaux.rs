@@ -721,7 +721,7 @@ define_print! {
             // Generate the main trait ref, including associated types.
             ty::tls::with(|tcx| {
                 // Use a type that can't appear in defaults of type parameters.
-                let dummy_self = tcx.mk_infer(ty::FreshTy(0));
+                let dummy_self = tcx.mk_ty_infer(ty::FreshTy(0));
                 let mut first = true;
 
                 if let Some(principal) = self.principal() {
@@ -857,7 +857,7 @@ define_print! {
         }
         debug {
             ty::tls::with(|tcx| {
-                let dummy_self = tcx.mk_infer(ty::FreshTy(0));
+                let dummy_self = tcx.mk_ty_infer(ty::FreshTy(0));
 
                 let trait_ref = *tcx.lift(&ty::Binder::bind(*self))
                                    .expect("could not lift TraitRef for printing")
