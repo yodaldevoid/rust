@@ -1,4 +1,6 @@
+use crate::infer::const_variable::ConstVariableMap;
 use crate::infer::type_variable::TypeVariableMap;
+use crate::mir::interpret::ConstValue;
 use crate::ty::{self, Ty, TyCtxt};
 use crate::ty::fold::{TypeFoldable, TypeFolder};
 
@@ -53,7 +55,12 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
     {
         debug!("fudge_regions_if_ok(origin={:?})", origin);
 
-        let (type_variables, region_vars, value) = self.probe(|snapshot| {
+        let (
+            type_variables,
+            region_vars,
+            const_variables,
+            value
+        ) = self.probe(|snapshot| {
             match f() {
                 Ok(value) => {
                     let value = self.resolve_type_vars_if_possible(&value);
@@ -70,8 +77,11 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                     let region_vars =
                         self.borrow_region_constraints().vars_created_since_snapshot(
                             &snapshot.region_constraints_snapshot);
+                    let const_variables = self.const_unification_table
+                        .borrow_mut()
+                        .consts_created_since_snapshot(&snapshot.const_snapshot);
 
-                    Ok((type_variables, region_vars, value))
+                    Ok((type_variables, region_vars, const_variables, value))
                 }
                 Err(e) => Err(e),
             }
@@ -84,7 +94,10 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
 
         // Micro-optimization: if no variables have been created, then
         // `value` can't refer to any of them. =) So we can just return it.
-        if type_variables.is_empty() && region_vars.is_empty() {
+        if type_variables.is_empty()
+            && region_vars.is_empty()
+            && const_variables.is_empty()
+        {
             return Ok(value);
         }
 
@@ -92,6 +105,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
             infcx: self,
             type_variables: &type_variables,
             region_vars: &region_vars,
+            const_variables: &const_variables,
             origin,
         };
 
@@ -103,6 +117,7 @@ pub struct RegionFudger<'a, 'gcx: 'a+'tcx, 'tcx: 'a> {
     infcx: &'a InferCtxt<'a, 'gcx, 'tcx>,
     type_variables: &'a TypeVariableMap,
     region_vars: &'a Vec<ty::RegionVid>,
+    const_variables: &'a ConstVariableMap<'tcx>,
     origin: &'a RegionVariableOrigin,
 }
 
@@ -151,6 +166,33 @@ impl<'a, 'gcx, 'tcx> TypeFolder<'gcx, 'tcx> for RegionFudger<'a, 'gcx, 'tcx> {
     }
 
     fn fold_const(&mut self, ct: &'tcx ty::LazyConst<'tcx>) -> &'tcx ty::LazyConst<'tcx> {
-        ct // FIXME(const_generics)
+        if let ty::LazyConst::Evaluated(ty::Const {
+            val: ConstValue::Infer(ty::InferConst::Var(vid)),
+            ty,
+        }) = *ct {
+            match self.const_variables.get(&vid) {
+                None => {
+                    // This variable was created before the
+                    // "fudging".  Since we refresh all
+                    // variables to their binding anyhow, we know
+                    // that it is unbound, so we can just return
+                    // it.
+                    debug_assert!(
+                        self.infcx.const_unification_table.borrow_mut()
+                        .probe(vid)
+                        .is_unknown()
+                    );
+                    ct
+                }
+                Some(&origin) => {
+                    // This variable was created during the
+                    // fudging. Recreate it with a fresh variable
+                    // here.
+                    self.infcx.next_const_var(ty, origin)
+                }
+            }
+        } else {
+            ct.super_fold_with(self)
+        }
     }
 }
