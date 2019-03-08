@@ -1227,7 +1227,7 @@ fn confirm_object_candidate<'cx, 'gcx, 'tcx>(
     -> Progress<'tcx>
 {
     let self_ty = obligation_trait_ref.self_ty();
-    let object_ty = selcx.infcx().shallow_resolve(self_ty);
+    let object_ty = selcx.infcx().shallow_resolve_type(self_ty);
     debug!("confirm_object_candidate(object_ty={:?})",
            object_ty);
     let data = match object_ty.sty {
@@ -1344,7 +1344,7 @@ fn confirm_fn_pointer_candidate<'cx, 'gcx, 'tcx>(
     fn_pointer_vtable: VtableFnPointerData<'tcx, PredicateObligation<'tcx>>)
     -> Progress<'tcx>
 {
-    let fn_type = selcx.infcx().shallow_resolve(fn_pointer_vtable.fn_ty);
+    let fn_type = selcx.infcx().shallow_resolve_type(fn_pointer_vtable.fn_ty);
     let sig = fn_type.fn_sig(selcx.tcx());
     let Normalized {
         value: sig,
@@ -1369,7 +1369,7 @@ fn confirm_closure_candidate<'cx, 'gcx, 'tcx>(
     let tcx = selcx.tcx();
     let infcx = selcx.infcx();
     let closure_sig_ty = vtable.substs.closure_sig_ty(vtable.closure_def_id, tcx);
-    let closure_sig = infcx.shallow_resolve(&closure_sig_ty).fn_sig(tcx);
+    let closure_sig = infcx.shallow_resolve_type(&closure_sig_ty).fn_sig(tcx);
     let Normalized {
         value: closure_sig,
         obligations
