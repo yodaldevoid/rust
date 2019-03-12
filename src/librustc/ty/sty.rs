@@ -2261,6 +2261,10 @@ impl<'tcx> Const<'tcx> {
                     }
                 }
             }
+            ConstValue::Placeholder(_) => {
+                flags |= TypeFlags::HAS_FREE_REGIONS;
+                flags |= TypeFlags::HAS_CT_PLACEHOLDER;
+            }
             _ => {}
         }
 

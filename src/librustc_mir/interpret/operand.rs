@@ -594,7 +594,7 @@ impl<'a, 'mir, 'tcx, M: Machine<'a, 'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> 
             self.layout_of(val.ty)
         })?;
         let op = match val.val {
-            ConstValue::Param(_) | ConstValue::Infer(_) => bug!(),
+            ConstValue::Param(_) | ConstValue::Infer(_) | ConstValue::Placeholder(_) => bug!(),
             ConstValue::ByRef(ptr, alloc) => {
                 // We rely on mutability being set correctly in that allocation to prevent writes
                 // where none should happen -- and for `static mut`, we copy on demand anyway.

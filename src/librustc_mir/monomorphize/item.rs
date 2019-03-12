@@ -401,10 +401,11 @@ impl<'a, 'tcx> DefPathBasedNames<'a, 'tcx> {
             LazyConst::Unevaluated(..) => output.push_str("_: _"),
             LazyConst::Evaluated(Const { ty, val }) => {
                 match val {
-                    ConstValue::Infer(..) => output.push_str("_"),
+                    ConstValue::Infer(_) => output.push_str("_"),
                     ConstValue::Param(ParamConst { name, .. }) => {
                         write!(output, "{}", name).unwrap();
                     }
+                    ConstValue::Placeholder(_) => output.push_str("_"),
                     _ => write!(output, "{:?}", c).unwrap(),
                 }
                 output.push_str(": ");

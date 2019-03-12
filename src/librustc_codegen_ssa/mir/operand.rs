@@ -78,6 +78,7 @@ impl<'a, 'tcx: 'a, V: CodegenObject> OperandRef<'tcx, V> {
         let val = match val.val {
             ConstValue::Param(_) => bug!("encountered a ConstValue::Param in codegen"),
             ConstValue::Infer(_) => bug!("encountered a ConstValue::Infer in codegen"),
+            ConstValue::Placeholder(_) => bug!("encountered a ConstValue::Placeholder in codegen"),
             ConstValue::Scalar(x) => {
                 let scalar = match layout.abi {
                     layout::Abi::Scalar(ref x) => x,

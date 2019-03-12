@@ -514,6 +514,7 @@ impl<'a, 'tcx> Lift<'tcx> for ConstValue<'a> {
                     InferConst::Canonical(debrujin, var) => InferConst::Canonical(debrujin, var),
                 }))
             }
+            ConstValue::Placeholder(p) => Some(ConstValue::Placeholder(p)),
             ConstValue::Scalar(x) => Some(ConstValue::Scalar(x)),
             ConstValue::Slice(x, y) => Some(ConstValue::Slice(x, y)),
             ConstValue::ByRef(ptr, alloc) => Some(ConstValue::ByRef(

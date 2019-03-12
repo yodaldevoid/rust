@@ -330,6 +330,7 @@ impl_stable_hash_for!(
     impl<'tcx> for enum mir::interpret::ConstValue<'tcx> [ mir::interpret::ConstValue ] {
         Param(param),
         Infer(infer),
+        Placeholder(placeholder),
         Scalar(val),
         Slice(a, b),
         ByRef(ptr, alloc),

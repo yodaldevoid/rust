@@ -1466,9 +1466,9 @@ define_print! {
                         }
                         ty::LazyConst::Evaluated(c) => ty::tls::with(|tcx| {
                             match c.val {
-                                ConstValue::Infer(..) => write!(f, "_"),
-                                ConstValue::Param(ParamConst { name, .. }) =>
-                                    write!(f, "{}", name),
+                                ConstValue::Infer(_) => write!(f, "_"),
+                                ConstValue::Param(ParamConst { name, .. }) => write!(f, "{}", name),
+                                ConstValue::Placeholder(_) => write!(f, "_"),
                                 _ => write!(f, "{}", c.unwrap_usize(tcx)),
                             }
                         })?,
@@ -1498,8 +1498,9 @@ define_print! {
     ('tcx) ConstValue<'tcx>, (self, f, cx) {
         display {
             match self {
-                ConstValue::Infer(..) => write!(f, "_"),
+                ConstValue::Infer(_) => write!(f, "_"),
                 ConstValue::Param(ParamConst { name, .. }) => write!(f, "{}", name),
+                ConstValue::Placeholder(_) => write!(f, "_"),
                 _ => write!(f, "{:?}", self),
             }
         }
