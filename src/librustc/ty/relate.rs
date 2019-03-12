@@ -7,7 +7,7 @@
 use crate::hir::def_id::DefId;
 use crate::ty::subst::{Kind, UnpackedKind, SubstsRef};
 use crate::ty::{self, Ty, TyCtxt, TypeFoldable};
-use crate::ty::error::{ExpectedFound, TypeError, ConstError};
+use crate::ty::error::{ExpectedFound, TypeError};
 use crate::mir::interpret::{ConstValue, Scalar, GlobalId};
 use crate::util::common::ErrorReported;
 use syntax_pos::DUMMY_SP;
@@ -626,9 +626,7 @@ where
                     );
                 }
                  _ => {
-                    Err(TypeError::ConstError(
-                        ConstError::Mismatch(expected_found(relation, &a, &b))
-                    ))
+                    Err(TypeError::ConstMismatch(expected_found(relation, &a, &b)))
                 }
             }
         }
@@ -642,9 +640,7 @@ where
             Ok(tcx.mk_lazy_const(ty::LazyConst::Unevaluated(*a_def_id, substs)))
         }
         _ => {
-            Err(TypeError::ConstError(
-                ConstError::Mismatch(expected_found(relation, &a, &b))
-            ))
+            Err(TypeError::ConstMismatch(expected_found(relation, &a, &b)))
         }
     }
 }
