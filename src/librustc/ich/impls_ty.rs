@@ -1123,6 +1123,7 @@ impl_stable_hash_for!(enum infer::canonical::CanonicalVarKind {
     Region(ui),
     PlaceholderRegion(placeholder),
     Const(ui),
+    PlaceholderConst(placeholder),
 });
 
 impl_stable_hash_for!(enum infer::canonical::CanonicalTyVarKind {

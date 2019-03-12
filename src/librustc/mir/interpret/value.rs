@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::ty::{Ty, InferConst, ParamConst, layout::{HasDataLayout, Size}};
+use crate::ty::{Ty, InferConst, ParamConst, PlaceholderConst, layout::{HasDataLayout, Size}};
 
 use super::{EvalResult, Pointer, PointerArithmetic, Allocation, AllocId, sign_extend, truncate};
 
@@ -22,6 +22,9 @@ pub enum ConstValue<'tcx> {
 
     /// Infer the value of the const.
     Infer(InferConst<'tcx>),
+
+    /// A placeholder const - universally quantified higher-ranked const.
+    Placeholder(PlaceholderConst),
 
     /// Used only for types with `layout::abi::Scalar` ABI and ZSTs.
     ///
