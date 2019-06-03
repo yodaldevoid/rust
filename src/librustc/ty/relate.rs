@@ -608,6 +608,15 @@ where
                 ty: a.ty,
             }))
         }
+        (a_val @ ConstValue::Slice{ .. }, b_val @ _)
+            if a_val == b_val =>
+        {
+            let ty = relation.relate(&a.ty, &b.ty)?;
+            Ok(tcx.mk_const(ty::Const {
+                val: a_val,
+                ty: &ty,
+            }))
+        }
         (ConstValue::ByRef(..), _) => {
             bug!(
                 "non-Scalar ConstValue encountered in super_relate_consts {:?} {:?}",
