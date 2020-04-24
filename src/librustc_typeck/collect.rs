@@ -63,6 +63,7 @@ fn collect_mod_item_types(tcx: TyCtxt<'_>, module_def_id: DefId) {
 
 pub fn provide(providers: &mut Providers<'_>) {
     *providers = Providers {
+        const_param_of: type_of::const_param_of,
         type_of: type_of::type_of,
         generics_of,
         predicates_of,
