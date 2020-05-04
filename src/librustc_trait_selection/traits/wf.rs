@@ -94,8 +94,8 @@ pub fn predicate_obligations<'a, 'tcx>(
             wf.compute(data.skip_binder().a); // (*)
             wf.compute(data.skip_binder().b); // (*)
         }
-        &ty::PredicateKind::ConstEvaluatable(def_id, substs) => {
-            let obligations = wf.nominal_obligations(def_id, substs);
+        &ty::PredicateKind::ConstEvaluatable(def, substs) => {
+            let obligations = wf.nominal_obligations(def.did, substs);
             wf.out.extend(obligations);
 
             for ty in substs.types() {
@@ -310,14 +310,14 @@ impl<'a, 'tcx> WfPredicates<'a, 'tcx> {
     /// Pushes the obligations required for an array length to be WF
     /// into `self.out`.
     fn compute_array_len(&mut self, constant: ty::Const<'tcx>) {
-        if let ty::ConstKind::Unevaluated(def_id, substs, promoted) = constant.val {
+        if let ty::ConstKind::Unevaluated(def, substs, promoted) = constant.val {
             assert!(promoted.is_none());
 
-            let obligations = self.nominal_obligations(def_id, substs);
+            let obligations = self.nominal_obligations(def.did, substs);
             self.out.extend(obligations);
 
             let predicate =
-                ty::PredicateKind::ConstEvaluatable(def_id, substs).to_predicate(self.tcx());
+                ty::PredicateKind::ConstEvaluatable(def, substs).to_predicate(self.tcx());
             let cause = self.cause(traits::MiscObligation);
             self.out.push(traits::Obligation::new(cause, self.param_env, predicate));
         }

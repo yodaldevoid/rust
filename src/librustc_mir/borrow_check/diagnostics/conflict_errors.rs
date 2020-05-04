@@ -190,7 +190,10 @@ impl<'cx, 'tcx> MirBorrowckCtxt<'cx, 'tcx> {
                     .ty;
             let needs_note = match ty.kind {
                 ty::Closure(id, _) => {
-                    let tables = self.infcx.tcx.typeck_tables_of(id.expect_local());
+                    let tables = self
+                        .infcx
+                        .tcx
+                        .typeck_tables_of(self.infcx.tcx.with_opt_param(id.expect_local()));
                     let hir_id = self.infcx.tcx.hir().as_local_hir_id(id.expect_local());
 
                     tables.closure_kind_origins().get(hir_id).is_none()
@@ -881,7 +884,7 @@ impl<'cx, 'tcx> MirBorrowckCtxt<'cx, 'tcx> {
                                 match &self
                                     .infcx
                                     .tcx
-                                    .typeck_tables_of(def_id)
+                                    .typeck_tables_of(self.infcx.tcx.with_opt_param(def_id))
                                     .node_type(fn_hir_id)
                                     .kind
                                 {

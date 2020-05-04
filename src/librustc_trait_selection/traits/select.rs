@@ -497,14 +497,8 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
                 }
             }
 
-            &ty::PredicateKind::ConstEvaluatable(def_id, substs) => {
-                match self.tcx().const_eval_resolve(
-                    obligation.param_env,
-                    def_id,
-                    substs,
-                    None,
-                    None,
-                ) {
+            &ty::PredicateKind::ConstEvaluatable(def, substs) => {
+                match self.tcx().const_eval_resolve(obligation.param_env, def, substs, None, None) {
                     Ok(_) => Ok(EvaluatedToOk),
                     Err(ErrorHandled::TooGeneric) => Ok(EvaluatedToAmbig),
                     Err(_) => Ok(EvaluatedToErr),

@@ -37,7 +37,7 @@ pub(super) fn const_param_of(tcx: TyCtxt<'_>, def_id: DefId) -> Option<DefId> {
                 ..
             }) => {
                 let body_owner = tcx.hir().local_def_id(tcx.hir().enclosing_body_owner(hir_id));
-                let tables = tcx.typeck_tables_of(body_owner.to_def_id());
+                let tables = tcx.typeck_tables_of(tcx.with_opt_param(body_owner));
                 // This may fail in case the method/path does not actually exist.
                 // As there is no relevant param for `def_id`, we simply return
                 // `None` here.
@@ -75,8 +75,9 @@ pub(super) fn const_param_of(tcx: TyCtxt<'_>, def_id: DefId) -> Option<DefId> {
                             | ExprKind::Struct(&QPath::Resolved(_, path), ..),
                         ..
                     }) => {
-                        let body_owner = tcx.hir().local_def_id(tcx.hir().enclosing_body_owner(hir_id));
-                        let _tables = tcx.typeck_tables_of(body_owner.to_def_id());
+                        let body_owner =
+                            tcx.hir().local_def_id(tcx.hir().enclosing_body_owner(hir_id));
+                        let _tables = tcx.typeck_tables_of(tcx.with_opt_param(body_owner));
                         &*path
                     }
                     _ => span_bug!(DUMMY_SP, "unexpected const parent path {:?}", parent_node),
@@ -226,13 +227,15 @@ pub(super) fn type_of(tcx: TyCtxt<'_>, def_id: DefId) -> Ty<'_> {
                 ItemKind::OpaqueTy(OpaqueTy { impl_trait_fn: Some(owner), origin, .. }) => {
                     let concrete_types = match origin {
                         OpaqueTyOrigin::FnReturn | OpaqueTyOrigin::AsyncFn => {
-                            &tcx.mir_borrowck(owner.expect_local()).concrete_opaque_types
+                            &tcx.mir_borrowck(tcx.with_opt_param(owner.expect_local()))
+                                .concrete_opaque_types
                         }
                         OpaqueTyOrigin::Misc => {
                             // We shouldn't leak borrowck results through impl trait in bindings.
                             // For example, we shouldn't be able to tell if `x` in
                             // `let x: impl Sized + 'a = &()` has type `&'static ()` or `&'a ()`.
-                            &tcx.typeck_tables_of(owner.expect_local()).concrete_opaque_types
+                            &tcx.typeck_tables_of(tcx.with_opt_param(owner.expect_local()))
+                                .concrete_opaque_types
                         }
                         OpaqueTyOrigin::TypeAlias => {
                             span_bug!(item.span, "Type alias impl trait shouldn't have an owner")
@@ -249,8 +252,9 @@ pub(super) fn type_of(tcx: TyCtxt<'_>, def_id: DefId) -> Ty<'_> {
                                     owner, def_id,
                                 ),
                             );
-                            if let Some(ErrorReported) =
-                                tcx.typeck_tables_of(owner.expect_local()).tainted_by_errors
+                            if let Some(ErrorReported) = tcx
+                                .typeck_tables_of(tcx.with_opt_param(owner.expect_local()))
+                                .tainted_by_errors
                             {
                                 // Some error in the
                                 // owner fn prevented us from populating
@@ -456,7 +460,12 @@ fn find_opaque_ty_constraints(tcx: TyCtxt<'_>, def_id: LocalDefId) -> Ty<'_> {
             }
             // Calling `mir_borrowck` can lead to cycle errors through
             // const-checking, avoid calling it if we don't have to.
-            if !self.tcx.typeck_tables_of(def_id).concrete_opaque_types.contains_key(&self.def_id) {
+            if !self
+                .tcx
+                .typeck_tables_of(self.tcx.with_opt_param(def_id))
+                .concrete_opaque_types
+                .contains_key(&self.def_id)
+            {
                 debug!(
                     "find_opaque_ty_constraints: no constraint for `{:?}` at `{:?}`",
                     self.def_id, def_id,
@@ -464,7 +473,11 @@ fn find_opaque_ty_constraints(tcx: TyCtxt<'_>, def_id: LocalDefId) -> Ty<'_> {
                 return;
             }
             // Use borrowck to get the type with unerased regions.
-            let ty = self.tcx.mir_borrowck(def_id).concrete_opaque_types.get(&self.def_id);
+            let ty = self
+                .tcx
+                .mir_borrowck(self.tcx.with_opt_param(def_id))
+                .concrete_opaque_types
+                .get(&self.def_id);
             if let Some(ty::ResolvedOpaqueTy { concrete_type, substs }) = ty {
                 debug!(
                     "find_opaque_ty_constraints: found constraint for `{:?}` at `{:?}`: {:?}",

@@ -510,10 +510,10 @@ impl<'a, 'b, 'tcx> ObligationProcessor for FulfillProcessor<'a, 'b, 'tcx> {
                 }
             }
 
-            &ty::PredicateKind::ConstEvaluatable(def_id, substs) => {
+            &ty::PredicateKind::ConstEvaluatable(def, substs) => {
                 match self.selcx.infcx().const_eval_resolve(
                     obligation.param_env,
-                    def_id,
+                    def,
                     substs,
                     None,
                     Some(obligation.cause.span),

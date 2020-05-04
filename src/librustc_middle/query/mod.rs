@@ -95,10 +95,10 @@ rustc_queries! {
         ///
         /// ```rust
         /// let a = foo::<7>();
-        ///               ^ Calling `const_param_of` for this argument,
+        /// //            ^ Calling `const_param_of` for this argument,
         ///
         /// fn foo<const N: usize>()
-        ///              ^ returns this `DefId`.
+        /// //           ^ returns this `DefId`.
         /// ```
         query const_param_of(key: DefId) -> Option<DefId> {
             cache_on_disk_if { key.is_local() }
@@ -180,14 +180,14 @@ rustc_queries! {
         /// Maps DefId's that have an associated `mir::Body` to the result
         /// of the MIR const-checking pass. This is the set of qualifs in
         /// the final value of a `const`.
-        query mir_const_qualif(key: DefId) -> mir::ConstQualifs {
-            desc { |tcx| "const checking `{}`", tcx.def_path_str(key) }
-            cache_on_disk_if { key.is_local() }
+        query mir_const_qualif(key: ty::WithOptParam<DefId>) -> mir::ConstQualifs {
+            desc { |tcx| "const checking `{}`", tcx.def_path_str(key.did) }
+            cache_on_disk_if { key.did.is_local() }
         }
 
         /// Fetch the MIR for a given `DefId` right after it's built - this includes
         /// unreachable code.
-        query mir_built(_: LocalDefId) -> Steal<mir::Body<'tcx>> {
+        query mir_built(_: ty::WithOptParam<LocalDefId>) -> Steal<mir::Body<'tcx>> {
             storage(ArenaCacheSelector<'tcx>)
             desc { "building MIR for" }
         }
@@ -196,31 +196,34 @@ rustc_queries! {
         /// ready for const evaluation.
         ///
         /// See the README for the `mir` module for details.
-        query mir_const(_: DefId) -> Steal<mir::Body<'tcx>> {
+        query mir_const(key: ty::WithOptParam<DefId>) -> Steal<mir::Body<'tcx>> {
+            desc { |tcx| "processing `{}`", tcx.def_path_str(key.did) }
             storage(ArenaCacheSelector<'tcx>)
             no_hash
         }
 
-        query mir_validated(key: LocalDefId) ->
+        query mir_validated(key: ty::WithOptParam<LocalDefId>) ->
             (
                 Steal<mir::Body<'tcx>>,
                 Steal<IndexVec<mir::Promoted, mir::Body<'tcx>>>
             ) {
             storage(ArenaCacheSelector<'tcx>)
             no_hash
-            desc { |tcx| "processing `{}`", tcx.def_path_str(key.to_def_id()) }
+            desc { |tcx| "processing `{}`", tcx.def_path_str(key.did.to_def_id()) }
         }
 
         /// MIR after our optimization passes have run. This is MIR that is ready
         /// for codegen. This is also the only query that can fetch non-local MIR, at present.
-        query optimized_mir(key: DefId) -> mir::Body<'tcx> {
+        query optimized_mir(key: ty::WithOptParam<DefId>) -> mir::Body<'tcx> {
+            desc { |tcx| "processing `{}`", tcx.def_path_str(key.did) }
             storage(ArenaCacheSelector<'tcx>)
-            cache_on_disk_if { key.is_local() }
+            cache_on_disk_if { key.did.is_local() }
         }
 
-        query promoted_mir(key: DefId) -> IndexVec<mir::Promoted, mir::Body<'tcx>> {
+        query promoted_mir(key: ty::WithOptParam<DefId>) -> IndexVec<mir::Promoted, mir::Body<'tcx>> {
+            desc { |tcx| "processing `{}`", tcx.def_path_str(key.did) }
             storage(ArenaCacheSelector<'tcx>)
-            cache_on_disk_if { key.is_local() }
+            cache_on_disk_if { key.did.is_local() }
         }
     }
 
@@ -395,8 +398,8 @@ rustc_queries! {
 
     TypeChecking {
         /// The result of unsafety-checking this `DefId`.
-        query unsafety_check_result(key: LocalDefId) -> mir::UnsafetyCheckResult {
-            desc { |tcx| "unsafety-checking `{}`", tcx.def_path_str(key.to_def_id()) }
+        query unsafety_check_result(key: ty::WithOptParam<LocalDefId>) -> mir::UnsafetyCheckResult {
+            desc { |tcx| "unsafety-checking `{}`", tcx.def_path_str(key.did.to_def_id()) }
             cache_on_disk_if { true }
             storage(ArenaCacheSelector<'tcx>)
         }
@@ -466,8 +469,8 @@ rustc_queries! {
             desc { "type-checking all item bodies" }
         }
 
-        query typeck_tables_of(key: LocalDefId) -> &'tcx ty::TypeckTables<'tcx> {
-            desc { |tcx| "type-checking `{}`", tcx.def_path_str(key.to_def_id()) }
+        query typeck_tables_of(key: ty::WithOptParam<LocalDefId>) -> &'tcx ty::TypeckTables<'tcx> {
+            desc { |tcx| "type-checking `{}`", tcx.def_path_str(key.did.to_def_id()) }
             cache_on_disk_if { true }
         }
         query diagnostic_only_typeck_tables_of(key: LocalDefId) -> &'tcx ty::TypeckTables<'tcx> {
@@ -501,11 +504,11 @@ rustc_queries! {
     BorrowChecking {
         /// Borrow-checks the function body. If this is a closure, returns
         /// additional requirements that the closure's creator must verify.
-        query mir_borrowck(key: LocalDefId) -> mir::BorrowCheckResult<'tcx> {
+        query mir_borrowck(key: ty::WithOptParam<LocalDefId>) -> mir::BorrowCheckResult<'tcx> {
             storage(ArenaCacheSelector<'tcx>)
-            desc { |tcx| "borrow-checking `{}`", tcx.def_path_str(key.to_def_id()) }
+            desc { |tcx| "borrow-checking `{}`", tcx.def_path_str(key.did.to_def_id()) }
             cache_on_disk_if(tcx, opt_result) {
-                tcx.is_closure(key.to_def_id())
+                tcx.is_closure(key.did.to_def_id())
                     || opt_result.map_or(false, |r| !r.concrete_opaque_types.is_empty())
             }
         }
@@ -1306,9 +1309,9 @@ rustc_queries! {
         ///    from `Ok(None)` to avoid misleading diagnostics when an error
         ///    has already been/will be emitted, for the original cause
         query resolve_instance(
-            key: ty::ParamEnvAnd<'tcx, (DefId, SubstsRef<'tcx>)>
+            key: ty::ParamEnvAnd<'tcx, (ty::WithOptParam<DefId>, SubstsRef<'tcx>)>
         ) -> Result<Option<ty::Instance<'tcx>>, ErrorReported> {
-            desc { "resolving instance `{}`", ty::Instance::new(key.value.0, key.value.1) }
+            desc { "resolving instance `{}`", ty::Instance::new(key.value.0.did, key.value.1) }
         }
     }
 }
